@@ -6,6 +6,7 @@ from PyQt5.QtCore import Qt, pyqtSlot, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 import sys
 import os
+import glob
 import cv2
 import numpy as np
 from insightface.app import FaceAnalysis
@@ -16,9 +17,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.chosenFaces = []
+        self.chosenFacesEmbedding = []
+        self.chosenFolderPath = None
         # INITIALIZING INSIGHTFACE APP
         self.app = FaceAnalysis(providers=['CPUExecutionProvider'])
         self.app.prepare(ctx_id=0)
+        
         # WINDOW SETTINGS
         self.setWindowTitle("FaceMatch GUI - tkyDevs")
         self.setGeometry(100, 100, 1200, 800)
@@ -34,11 +38,17 @@ class MainWindow(QMainWindow):
         btnFolder.setMinimumHeight(50)
         btnFolder.setMaximumHeight(80)
         btnFolder.clicked.connect(self.ChooseFolder)
+        
+        btnFindPhotos = QPushButton('Find Photos')
+        btnFindPhotos.setMinimumHeight(50)
+        btnFindPhotos.setMaximumHeight(80)
+        btnFindPhotos.clicked.connect(self.findPhotos)
 
         # BUTTONS LAYOUT (Bottom)
         buttons_layout = QHBoxLayout()
         buttons_layout.addWidget(btnImgFile)
         buttons_layout.addWidget(btnFolder)
+        buttons_layout.addWidget(btnFindPhotos)
 
         # SCROLL AREA
         self.scrollArea = QScrollArea()
@@ -101,20 +111,36 @@ class MainWindow(QMainWindow):
         """Removes a face from chosenFaces and updates the UI."""
         if 0 <= index < len(self.chosenFaces):
             del self.chosenFaces[index]  # Remove the selected face
+            del self.chosenFacesEmbedding[index]  # Remove the selected face embedding
             self.update()  # Refresh the UI
-
+            
+    @pyqtSlot()
+    def findPhotos(self):
+        if not self.chosenFacesEmbedding:
+            print('No face embedding to compare. Try using the "Choose Face" button.')
+        elif not self.chosenFolderPath:
+            print('No directory selected to compare. Try using the "Choose Folder" button.')
+        else:
+            print('idk for now')
+        self.update()
 
     @pyqtSlot()
     def ChooseFolder(self):
         options = QFileDialog.Options()
         directory = QFileDialog.getExistingDirectory(self, "Select a Directory", "", options=options)
 
-        if directory:  # Check if a directory was selected
+        if directory:
             print(f"Selected Directory: {directory}")
+            image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.tiff"]
 
-            # Example: List all files in the directory
-            files = os.listdir(directory)
-            print("Files in the directory:", files)
+            # Check if at least one image file exists
+            image_found = any(glob.glob(os.path.join(directory, ext)) for ext in image_extensions)
+            if image_found:
+                self.chosenFolderPath = directory
+                print(self.chosenFolderPath)
+                return
+            else:
+                return
 
     @pyqtSlot()
     def ChooseFace(self):
@@ -136,6 +162,9 @@ class MainWindow(QMainWindow):
 
         try:
             faces = self.app.get(img_rgb)
+            if faces:
+                for i in faces:
+                    self.chosenFacesEmbedding.append(i)
         except Exception as e:
             print(f"Error while detecting faces: {e}")
             return
@@ -145,11 +174,7 @@ class MainWindow(QMainWindow):
 
         for face in faces:
             x1, y1, x2, y2 = map(int, face.bbox)
-
-            # Ensure bounding box is within image bounds
             h, w, _ = img_rgb.shape
-            x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
-
             cropped_face = img_rgb[y1:y2, x1:x2]
             self.chosenFaces.append(cropped_face)
 
