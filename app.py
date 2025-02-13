@@ -1,3 +1,4 @@
+# ----------------------------------------------------------------- IMPORTS
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout,
     QHBoxLayout, QSplitter, QFrame, QFileDialog, QLabel, QScrollArea, QSizePolicy
@@ -15,19 +16,22 @@ from insightface.app import FaceAnalysis
 from DLL import DoubleLinkedList
 from clickLabel import ClickableLabel
 
+# ----------------------------------------------------------------- MAIN WINDOW CLASS
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.DLL = DoubleLinkedList()
+        self.DLL = DoubleLinkedList()  # Used to store file paths to access images later
         self.current = None
+        
         self.chosenFaces = []
         self.chosenFacesEmbedding = []
         self.chosenFolderPath = None
+        
         # INITIALIZING INSIGHTFACE APP
         self.app = FaceAnalysis(providers=['CPUExecutionProvider'])
         self.app.prepare(ctx_id=0)
         
-        # WINDOW SETTINGS
+        # MAIN WINDOW SETTINGS
         self.setWindowTitle("FaceMatch GUI - tkyDevs")
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
@@ -45,11 +49,9 @@ class MainWindow(QMainWindow):
         btnCustomize(btnImgFile, self.ChooseFace)
         btnFolder = QPushButton('2. Choose Folder')
         btnCustomize(btnFolder, self.ChooseFolder)
-        
         btnFindPhotos = QPushButton('3. Find Photos')
         btnCustomize(btnFindPhotos, self.findPhotos)
         
-        # PREVIOUS/NEXT BUTTONS
         btnPrevPhoto = QPushButton('Previous Image')
         btnCustomize(btnPrevPhoto, self.prevImg)
         btnNextPhoto = QPushButton('Next Image')
@@ -91,7 +93,6 @@ class MainWindow(QMainWindow):
         results_layout = QVBoxLayout()
         results_layout.addWidget(self.results)
         results_layout.addLayout(prevNext_layout)
-        # WRAP `results_layout` IN A QWidget
         results_widget = QWidget()
         results_widget.setLayout(results_layout)
 
@@ -106,6 +107,7 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(buttons_layout)
         central_widget.setLayout(main_layout)
 
+# ----------------------------------------------------------------- CLASS METHODS
     def update(self):
         if self.faces_layout is None:
             self.faces_layout = QVBoxLayout()
@@ -121,7 +123,7 @@ class MainWindow(QMainWindow):
                 print("Error: Unable to load image.")
                 continue
 
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # PyQt requires RGB format
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
             height, width, channel = img.shape
             bytes_per_line = 3 * width
@@ -179,6 +181,7 @@ class MainWindow(QMainWindow):
                 counter = 0
                 for index in range(len(self.chosenFacesEmbedding)):
                     if counter < index: # 1 of the faces was not found so go to next image.
+                        print("Skipping image. 1 of the faces was not found.")
                         break
                     for foundFace in faces_in_image:
                         embedding1 = self.chosenFacesEmbedding[index].normed_embedding
@@ -192,7 +195,7 @@ class MainWindow(QMainWindow):
                             pass
                 if counter == len(self.chosenFacesEmbedding):
                     self.DLL.append(str(file_path))
-                    print("Face added to DLL.")
+                    print("All faces found. Adding to DLL.")
         
         if self.DLL.head:
             self.current = self.DLL.head
@@ -258,9 +261,7 @@ class MainWindow(QMainWindow):
         
     def prevImg(self):
         if self.current and self.current.prev:
-            print('prev btn')
             self.current = self.current.prev
-            print(f"Prev image: {self.current.path}")
             new_pixmap = QPixmap(self.current.path)
             if new_pixmap.isNull():
                 print("Failed to load image:", self.current.path)
@@ -268,13 +269,11 @@ class MainWindow(QMainWindow):
                 print("Loaded image:", self.current.path)
                 self.test.setPixmap(new_pixmap.scaled(500, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 self.test.repaint()
-
+                
     
     def nextImg(self):
         if self.current and self.current.next:
-            print('next btn')
             self.current = self.current.next
-            print(f"Next image: {self.current.path}")
             new_pixmap = QPixmap(self.current.path)
             if new_pixmap.isNull():
                 print("Failed to load image:", self.current.path)
@@ -282,7 +281,6 @@ class MainWindow(QMainWindow):
                 print("Loaded image:", self.current.path)
                 self.test.setPixmap(new_pixmap.scaled(500, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 self.test.repaint()
-
 
 
 def main():
