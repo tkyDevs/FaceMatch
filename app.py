@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout,
-    QHBoxLayout, QSplitter, QFrame, QFileDialog, QLabel, QScrollArea
+    QHBoxLayout, QSplitter, QFrame, QFileDialog, QLabel, QScrollArea, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSlot, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
@@ -9,6 +9,8 @@ import os
 import glob
 import cv2
 import numpy as np
+from pathlib import Path
+from PIL import Image
 from insightface.app import FaceAnalysis
 from DLL import DoubleLinkedList
 from clickLabel import ClickableLabel
@@ -16,6 +18,8 @@ from clickLabel import ClickableLabel
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.DLL = DoubleLinkedList()
+        self.current = None
         self.chosenFaces = []
         self.chosenFacesEmbedding = []
         self.chosenFolderPath = None
@@ -28,21 +32,31 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+        self.pixmap = QPixmap("empty.jpg")
+        
+        def btnCustomize(btn, function, minHeight=50, maxHeight=80):
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setMinimumHeight(minHeight)
+            btn.setMaximumHeight(maxHeight)
+            btn.clicked.connect(function)
 
         # BUTTONS
-        btnImgFile = QPushButton('Choose Face')
-        btnImgFile.setMinimumHeight(50)
-        btnImgFile.setMaximumHeight(80)
-        btnImgFile.clicked.connect(self.ChooseFace)
-        btnFolder = QPushButton('Choose Folder')
-        btnFolder.setMinimumHeight(50)
-        btnFolder.setMaximumHeight(80)
-        btnFolder.clicked.connect(self.ChooseFolder)
+        btnImgFile = QPushButton('1. Choose Face')
+        btnCustomize(btnImgFile, self.ChooseFace)
+        btnFolder = QPushButton('2. Choose Folder')
+        btnCustomize(btnFolder, self.ChooseFolder)
         
-        btnFindPhotos = QPushButton('Find Photos')
-        btnFindPhotos.setMinimumHeight(50)
-        btnFindPhotos.setMaximumHeight(80)
-        btnFindPhotos.clicked.connect(self.findPhotos)
+        btnFindPhotos = QPushButton('3. Find Photos')
+        btnCustomize(btnFindPhotos, self.findPhotos)
+        
+        # PREVIOUS/NEXT BUTTONS
+        btnPrevPhoto = QPushButton('Previous Image')
+        btnCustomize(btnPrevPhoto, self.prevImg)
+        btnNextPhoto = QPushButton('Next Image')
+        btnCustomize(btnNextPhoto, self.nextImg)
+        prevNext_layout = QHBoxLayout()
+        prevNext_layout.addWidget(btnPrevPhoto)
+        prevNext_layout.addWidget(btnNextPhoto)
 
         # BUTTONS LAYOUT (Bottom)
         buttons_layout = QHBoxLayout()
@@ -62,11 +76,29 @@ class MainWindow(QMainWindow):
         # RESULTS FRAME (For matched images)
         self.results = QFrame(self)
         self.results.setFrameShape(QFrame.StyledPanel)
+        self.results.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.test = QLabel(self.results)
+        self.test.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.test.setAlignment(Qt.AlignCenter)
+        scaled_pixmap = self.pixmap.scaled(500, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.test.setPixmap(scaled_pixmap)
+        self.test.setScaledContents(True)
+        layout = QVBoxLayout(self.results)
+        layout.addWidget(self.test)
+        self.results.setLayout(layout)
+
+        # RESULTS LAYOUT (Frame + Prev/Next Buttons)
+        results_layout = QVBoxLayout()
+        results_layout.addWidget(self.results)
+        results_layout.addLayout(prevNext_layout)
+        # WRAP `results_layout` IN A QWidget
+        results_widget = QWidget()
+        results_widget.setLayout(results_layout)
 
         # SPLITTER (For Top Left & Top Right Frames)
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self.scrollArea)
-        splitter.addWidget(self.results)
+        splitter.addWidget(results_widget)
 
         # MAIN LAYOUT
         main_layout = QVBoxLayout()
@@ -91,15 +123,12 @@ class MainWindow(QMainWindow):
 
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) # PyQt requires RGB format
 
-            # Convert to QImage
             height, width, channel = img.shape
             bytes_per_line = 3 * width
             q_img = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
 
-            # Convert QImage to QPixmap
             pixmap = QPixmap.fromImage(q_img)
 
-            # Resize image to fit the QLabel
             scaled_pixmap = pixmap.scaled(200, 200, aspectRatioMode=1)
             label = ClickableLabel(index)
             label.setPixmap(scaled_pixmap)
@@ -108,21 +137,70 @@ class MainWindow(QMainWindow):
             self.faces_layout.addWidget(label)
 
     def removeFace(self, index):
-        """Removes a face from chosenFaces and updates the UI."""
         if 0 <= index < len(self.chosenFaces):
-            del self.chosenFaces[index]  # Remove the selected face
-            del self.chosenFacesEmbedding[index]  # Remove the selected face embedding
-            self.update()  # Refresh the UI
+            del self.chosenFaces[index]
+            del self.chosenFacesEmbedding[index]
+            self.update()
             
+    def get_faces(self, image):
+        faces = self.app.get(image)
+        return faces
+    
     @pyqtSlot()
     def findPhotos(self):
         if not self.chosenFacesEmbedding:
             print('No face embedding to compare. Try using the "Choose Face" button.')
+            return
         elif not self.chosenFolderPath:
             print('No directory selected to compare. Try using the "Choose Folder" button.')
+            return
+
+        directory_path = Path(self.chosenFolderPath).resolve()
+        allowed_extensions = {".jpg", ".jpeg", ".png"}
+
+        if not directory_path.exists() or not directory_path.is_dir():
+            print(f"Error: Directory '{directory_path}' does not exist or is not a folder.")
+            return
+
+        for file_path in directory_path.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in allowed_extensions:
+                print(f"Processing: {file_path}")
+                image = cv2.imread(str(file_path))
+                if image is not None:
+                    print("Loaded image successfully.")
+                else:
+                    print(f"Error: Failed to load image {file_path}")
+
+                faces_in_image = self.get_faces(image)
+                if not faces_in_image:
+                    print(f"No faces detected in {file_path}. Skipping...")
+                    continue
+                print('Face embeddings loaded.')
+                counter = 0
+                for index in range(len(self.chosenFacesEmbedding)):
+                    if counter < index: # 1 of the faces was not found so go to next image.
+                        break
+                    for foundFace in faces_in_image:
+                        embedding1 = self.chosenFacesEmbedding[index].normed_embedding
+                        embedding2 = foundFace.normed_embedding
+                        similarity = np.dot(embedding1, embedding2)
+                        threshold = 0.5
+                        if similarity > threshold:
+                            counter += 1
+                            break
+                        else:
+                            pass
+                if counter == len(self.chosenFacesEmbedding):
+                    self.DLL.append(str(file_path))
+                    print("Face added to DLL.")
+        
+        if self.DLL.head:
+            self.current = self.DLL.head
+            self.pixmap = QPixmap(self.current.path)
+            self.update()
         else:
-            print('idk for now')
-        self.update()
+            print("Error: No images added to the DLL.")
+
 
     @pyqtSlot()
     def ChooseFolder(self):
@@ -133,11 +211,9 @@ class MainWindow(QMainWindow):
             print(f"Selected Directory: {directory}")
             image_extensions = ["*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.tiff"]
 
-            # Check if at least one image file exists
             image_found = any(glob.glob(os.path.join(directory, ext)) for ext in image_extensions)
             if image_found:
                 self.chosenFolderPath = directory
-                print(self.chosenFolderPath)
                 return
             else:
                 return
@@ -157,11 +233,10 @@ class MainWindow(QMainWindow):
             print("Error: Image could not be loaded.")
             return
 
-        # Convert BGR to RGB for face detection
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         try:
-            faces = self.app.get(img_rgb)
+            faces = self.get_faces(img_rgb)
             if faces:
                 for i in faces:
                     self.chosenFacesEmbedding.append(i)
@@ -180,6 +255,34 @@ class MainWindow(QMainWindow):
 
         print(f"Stored {len(self.chosenFaces)} faces.")
         self.update()
+        
+    def prevImg(self):
+        if self.current and self.current.prev:
+            print('prev btn')
+            self.current = self.current.prev
+            print(f"Prev image: {self.current.path}")
+            new_pixmap = QPixmap(self.current.path)
+            if new_pixmap.isNull():
+                print("Failed to load image:", self.current.path)
+            else:
+                print("Loaded image:", self.current.path)
+                self.test.setPixmap(new_pixmap.scaled(500, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.test.repaint()
+
+    
+    def nextImg(self):
+        if self.current and self.current.next:
+            print('next btn')
+            self.current = self.current.next
+            print(f"Next image: {self.current.path}")
+            new_pixmap = QPixmap(self.current.path)
+            if new_pixmap.isNull():
+                print("Failed to load image:", self.current.path)
+            else:
+                print("Loaded image:", self.current.path)
+                self.test.setPixmap(new_pixmap.scaled(500, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.test.repaint()
+
 
 
 def main():
